@@ -562,6 +562,317 @@ Because PhotoPrint **never needed to know who Rahul was**. It only wanted his ph
 - **OAuth** = valet key. Gives **access**, not identity.
 - **OIDC** = OAuth + **ID token** → gives **identity**.
 
+# Caching Explained: The Story of the Librarian and Her Desk
+
+*A complete guide for system design interviews, told as one story. A librarian, a basement archive, and a desk that makes everything faster.*
+
+---
+
+## The Opening Scene: The $5 Billion Speed Problem
+
+- A **tenth of a second** once cost Amazon **billions of dollars**.
+- Every **100 ms** a page got slower, they lost about **1% of sales**.
+- So Google, Netflix, Amazon and others went to war over speed, and almost all of them won with **the same trick**.
+- Not a faster server. Not a bigger database.
+- The trick: **remembering what you've already looked up.** That's **caching**.
+
+> **Core idea in one line:** Caching is not about making computers faster. It's about **avoiding unnecessary work**.
+
+---
+
+## Chapter 1: The Library with Endless Trips
+
+### The story
+You walk into one of the biggest libraries in the world: thousands of shelves, millions of books.
+
+1. You ask the librarian: **"Who invented Java?"**
+2. She goes down to a **massive basement archive**, searches hundreds of books, finds the answer, walks back, and says: **"James Gosling."** Slow, but correct.
+3. A minute later, **another person asks the exact same question.**
+4. She walks **all the way down again**, searches the **same shelves**, finds the **same book**, walks back with the **same answer**.
+5. Another visitor, same question, same trip. Again and again.
+
+**Is this efficient? No.** The answer hasn't changed, yet she repeats the same work every time.
+
+### The fix
+You say: *"Why don't you just keep that book on your desk?"*
+
+- She walks down **once**, brings the book back, and **keeps a copy on her desk**.
+- Next visitor asks the same question → she **opens the book on her desk** and answers **immediately**.
+
+**Same answer, much less work.**
+
+---
+
+## Chapter 2: What Is a Cache?
+
+That **desk** is the **cache**.
+
+| Library story | Real application |
+|---|---|
+| **Basement archive** | **Database** (where all original data lives) |
+| **Librarian** | **Application server** |
+| **Desk** | **Cache** (smaller, faster, keeps frequently used data close) |
+
+### Key Points
+- The cache **does not replace the database**.
+- The **database is still the source of truth**.
+- The cache is just a **shortcut**.
+- The app first checks: *"Do I already have a copy nearby?"*
+  - **Yes** → saves time.
+  - **No** → goes to the database.
+
+---
+
+## Chapter 3: A Customer Opens a Product Page (Hit vs Miss)
+
+### Request #1: Cache Miss
+1. A user opens a **product page**. The request reaches your backend.
+2. The app asks: **"Do I already have this in my cache?"**
+3. The cache is **empty**, so the app queries the **database**.
+4. The database finds the product and returns it.
+5. The app **stores a copy in the cache**, then sends the response.
+
+→ This is a **cache miss**. (Librarian walks to the basement, then puts a copy on her desk.)
+
+### Request #2: Cache Hit
+1. Another customer opens the **same product page** seconds later.
+2. The app asks again: *"Do I already have this?"*
+3. **Yes**, it's in the cache. **No database query.**
+4. The app returns the cached copy **instantly**.
+
+→ This is a **cache hit**. (Librarian opens the book on her desk.)
+
+### Side-by-side
+
+| | Cache Miss | Cache Hit |
+|---|---|---|
+| Journey | Request → App → Cache (empty) → **Database** → store copy → response | Request → App → Cache (found) → response |
+| Speed | Slow | **Instant** |
+| DB involved? | Yes | **No** |
+
+---
+
+## Chapter 4: Is the Cache Actually Helping? (Hit Rate)
+
+Out of **100 requests**, **95 are served from cache** and only **5 visit the database**. That's fantastic.
+
+> **Cache hit rate** = % of requests served directly from the cache.
+> **95 hits out of 100 = 95% hit rate.**
+
+### Why it matters
+- As your app grows from 1 user to **millions**, a good cache means most requests **never touch the database**.
+- Instead of **1,000,000 queries**, the DB might handle only **~50,000**.
+
+---
+
+## Chapter 5: The Desk Is Small (Cache Eviction)
+
+### Why not cache everything?
+- **Memory is expensive.** A database may store **terabytes**; keeping that all in memory isn't practical.
+- A cache is meant to be **small, fast, and selective**.
+
+### The story
+- The librarian's desk is **much smaller than the basement**; she can hold only **a handful of books**.
+- A visitor asks a **different question**. She fetches another book, but **the desk is full**.
+- New problem: not *"where do I find the answer?"* but **"which book do I throw away?"**
+
+This is **cache eviction**: when the cache is full, it **must remove something** before storing new data.
+
+### How does it decide? Three common strategies
+
+| Strategy | Meaning | Desk analogy |
+|---|---|---|
+| **LRU** (Least Recently Used) | Removes the item **not accessed for the longest time** | Remove the book **nobody has touched in 2 hours** (the most common choice) |
+| **LFU** (Least Frequently Used) | Removes the item **accessed the fewest times** | Remove the book **opened only once** |
+| **FIFO** (First In, First Out) | Removes the **oldest** item | Remove the book **that was placed on the desk first** |
+
+> **No universal winner.** They all solve the same problem: *a cache is small, so something eventually has to go.*
+
+---
+
+## Chapter 6: The Price Changed, but the Desk Didn't (Stale Data)
+
+Our cache looks almost perfect: faster requests, less DB load, smart about what it keeps. But there's one big problem.
+
+**What happens when the data changes?**
+
+### The story
+1. A customer opens the product page → cache hit → instant. 
+2. An **admin updates the price from $50 → $40**. The **database is now correct**.
+3. But the **cache still has the old $50**. Nobody told it.
+4. The next customer opens the page → cache hit → sees **$50** instead of **$40**.
+
+> **The app is fast but wrong.**
+> Users can forgive a **slow** app. They won't forgive **incorrect** data.
+
+This is the **stale data** problem.
+
+(Library version: the book on the desk is an **old edition**, but the librarian keeps reading from it.)
+
+---
+
+## Chapter 7: Fix #1: Put a Timer on It (TTL)
+
+### Idea
+Don't keep cached data **forever**. Every item gets a **timer** (say, **5 minutes**). The moment it's cached, the countdown starts. When it hits zero, the cache **removes it**, whether anyone asked or not.
+
+> **TTL = Time To Live.**
+
+### The catch
+- Suppose **TTL = 10 minutes** and the price changes just **1 minute** after caching.
+- For the next **9 minutes**, every customer still sees the **old price**.
+
+### When is that okay?
+| Fine | Not fine |
+|---|---|
+| **News website** (slightly old content is harmless) | **Banking app** |
+| **Blog** | **Ticket booking** (one seat left: two people think they own it) |
+| | **Inventory in a flash sale**, **airline tickets**, **stock prices** |
+
+Sometimes **waiting for the timer isn't an option.**
+
+---
+
+## Chapter 8: Fix #2: Tell the Cache Directly (Cache Invalidation)
+
+### Idea
+Instead of waiting for the timer, the **moment data changes**, the app tells the cache: *"This data has changed. Remove the old copy."*
+
+### Walkthrough
+1. Admin updates the price.
+2. The app writes the **new value to the database**.
+3. Immediately after, it sends one more instruction: **"Delete the cached product."**
+4. The cache **removes the old copy instantly**.
+5. Next customer arrives → cache is empty → **cache miss**.
+6. App fetches the **fresh $40** from the DB and **stores a new copy**.
+
+### Notice
+- The cache was **not updated directly**. It was **cleared**, and the **next request rebuilt it** automatically.
+- This pattern is called **Cache-Aside**, one of the **most common patterns** in real apps.
+
+### TTL vs Invalidation
+
+| | TTL | Invalidation |
+|---|---|---|
+| Simplicity | **Simpler** | More work |
+| Freshness | Can serve old data until timer ends | **More accurate** (cleared right when data changes) |
+| Best for | Blogs, news, rarely-changing data | Tickets, bank balances, stock prices, flash-sale inventory |
+
+> The right choice depends on **how fresh your data needs to be**.
+
+---
+
+## Chapter 9: Real Apps Have Many Desks (Where Caches Live)
+
+Real applications don't have just **one** cache. Follow a single request when you open **Amazon's homepage**:
+
+1. **Browser cache** (on your own computer)
+   - Checks for a valid copy of images, logos, style sheets.
+   - If found → **request ends right there**, nothing travels across the internet.
+2. **CDN** (Content Delivery Network)
+   - Servers **all over the world**; your request goes to the **closest one**.
+   - If the nearby server has a copy → response sent, **main app never contacted**.
+3. **Redis** (application-level cache)
+   - An **in-memory data store** built for speed. Keeps data in **memory instead of disk**, so it's **incredibly fast**.
+4. **Database**
+   - Only if **Redis also misses** does the app finally query the DB.
+
+### Why this matters
+- **1st request** travels all the way to the **database**, leaving copies behind (browser, CDN, Redis).
+- **2nd request** might stop at **Redis**.
+- **3rd** might stop at the **CDN**.
+- **4th** might **never leave the browser**.
+
+> Every layer moves the data **one step closer to the user**. That's what makes apps feel **instant**, even with millions of users.
+
+```
+User → Browser Cache → CDN → Redis → Database
+        (closest)                    (slowest, source of truth)
+```
+
+---
+
+## Chapter 10: The Interview Question
+
+> **Interviewer:** *"A product page is cached in Redis. An admin updates the price, but customers still see the old price for a few seconds. Why?"*
+
+### Reasoning step by step
+1. The **database was updated**, so the DB is correct.
+2. **Redis still holds the old copy.**
+3. The app **reads from the cache** instead of the database → customers see the old price.
+
+> **Interviewer:** *"How would you fix it?"*
+
+### There isn't one answer. Explain the trade-off:
+- **Blog / news site (data rarely changes)** → a **short TTL** is perfectly fine.
+- **Airline tickets, bank balances, stock prices, flash-sale inventory** → stale data causes **serious problems** → **invalidate the cache the moment the DB updates**.
+
+> **What interviewers listen for:** not memorized definitions, but the **reasoning behind the design**.
+> **TTL is simpler. Invalidation is more accurate.** Your job is to pick what fits.
+
+---
+
+## Chapter 11: The Answer to the Opening Question
+
+**"Why was the first request slow, but the second almost instant?"**
+
+- The **first request did all the work**: it travelled through **every layer** until it reached the **database**, and **left copies behind** (browser, CDN, Redis).
+- The **second request** stops at the **first place that already has the answer**: sometimes the browser, sometimes the CDN, sometimes Redis.
+- Only if **every cache misses** does the database get involved again.
+
+---
+
+## The One Question Behind Everything
+
+> **"Do I already have the answer?"**
+> - **Yes** → use it.
+> - **No** → fetch it, **store a copy**, and make the next request faster.
+
+Everything else (**hits, misses, hit rate, LRU, LFU, FIFO, TTL, invalidation, browser cache, CDN, Redis**) is just a **technique built around that one question**.
+
+---
+
+## Quick Glossary (Story Edition)
+
+| Term | In the library story | In real life |
+|---|---|---|
+| **Database** | Basement archive | Source of truth, slow, huge |
+| **Cache** | Desk | Small, fast, selective memory |
+| **Cache miss** | Not on desk → walk to basement | Not in cache → query DB |
+| **Cache hit** | Book already on desk | Found in cache → instant |
+| **Hit rate** | % of questions answered from the desk | e.g., 95 / 100 = 95% |
+| **Eviction** | Desk is full → remove a book | Cache full → remove an item |
+| **LRU** | Remove book untouched the longest | Least Recently Used |
+| **LFU** | Remove book opened the fewest times | Least Frequently Used |
+| **FIFO** | Remove the book placed first | First In, First Out |
+| **Stale data** | Desk has an old edition | Cache has outdated value |
+| **TTL** | Sticky note: "throw away after 5 min" | Time To Live |
+| **Invalidation** | New edition arrives → throw the old book out immediately | Delete cache entry when data changes |
+| **Cache-Aside** | Check desk → if missing, fetch from basement and place on desk | App checks cache first, loads from DB on miss, stores a copy |
+| **Browser cache** | Notes in your own pocket | Local copy on user's device |
+| **CDN** | Branch library near your home | Nearby server with a copy |
+| **Redis** | Fast desk in the main library | In-memory data store |
+
+---
+
+## 1-Minute Revision Sheet
+
+- **Caching = remembering what you've already looked up** → avoids repeated work.
+- **Cache ≠ database.** DB is the **source of truth**; cache is a **shortcut**.
+- **Miss** = not found → query DB → **store copy**. **Hit** = found → instant.
+- **Hit rate** = hits ÷ total requests (95/100 = 95%). Higher = less DB load.
+- **Memory is expensive** → cache is small → needs **eviction** (**LRU**, **LFU**, **FIFO**).
+- **Stale data**: DB updated but cache still old. *Fast but wrong is worse than slow.*
+- **TTL**: auto-expire after a time. **Simple**, but data may be stale until it expires.
+- **Invalidation**: delete cache entry when data changes. **Accurate**, more work.
+- **Cache-Aside**: update DB → delete cache → next request misses and **rebuilds** the cache.
+- **Layers**: **Browser → CDN → Redis → Database**. Each layer brings data closer to the user.
+- **Interview tip:** explain the **trade-off** (TTL vs invalidation) based on **how fresh the data must be**.
+
+---
+
+*Notes based on the video "Caching Explained: The Complete Guide for System Design Interviews".*
+
 ---
 
 *Notes based on the "Visual Coders" video on authentication concepts.*
