@@ -1,6 +1,277 @@
 
 https://www.youtube.com/watch?v=79GIGeDA8_k&list=PLSUu-5i14fZ0
 
+# 10,000 Users Hit One Server and It Dies: The Story of Three Boxes
+
+*One app grows from a single server into a full system. At each stage a "box" is added in front of it, and the three boxes look identical on a diagram. Let's see why they are not.*
+
+---
+
+## The Opening Scene
+
+**9 PM.** Your app hits the front page. **10,000 people land on one server. It dies.**
+
+- Your senior adds **one box** in front of it → everything works again.
+- A week later, a hacker attacks → **a box** stops him.
+- A month later, you split the app into many small services → **a box** fixes that too.
+
+**The strange part:** those were **three different boxes**, yet on a diagram they look the same: same spot, same arrows. Mixing them up is how interviews go wrong.
+
+> **Analogy for the whole story:** Think of your app as a **busy restaurant** that grows into a **big shopping mall**. At each stage, a different person stands at the entrance, and each one answers a *different question*.
+
+---
+
+## Chapter 1: The server is exposed (Reverse Proxy)
+
+### The problem
+The address users connect to is the **address of your real server**. Anyone on the internet can find it, **including the attacker**.
+
+### The restaurant version
+Imagine customers walking straight into your **kitchen** because the kitchen door opens onto the street. Anyone can walk in, even someone with bad intentions.
+
+### The fix
+Stop letting people talk to the real server. Put **one machine in front of it** and give the world **that machine's address** instead. This front machine is the **reverse proxy**.
+
+> **Analogy:** a **receptionist / front door**. Customers talk only to the receptionist. The receptionist walks the order to the kitchen and brings the food back. Customers **never even know the kitchen exists**.
+
+### What happens now
+- **Normal user:** talks to the proxy → proxy forwards to Server A → answer comes back the same way. User never learns Server A exists.
+- **Attacker:** tries to reach Server A directly → **Blocked.**
+  - Server A has **no public address**.
+  - The network **only accepts traffic that comes through the proxy**.
+
+### Important detail
+- The proxy is the **controlled front door**.
+- The **network rules** are what *actually* block direct access. (A proxy alone doesn't protect you if the server is still publicly reachable.)
+
+### Bonus: the front door can do useful work
+Since **every request passes through this one door**, the proxy can:
+- Serve a **cached copy** instantly (like the receptionist handing out a ready-made menu instead of asking the kitchen every time)
+- Handle **TLS** (HTTPS encryption)
+- **Route** requests
+- **Filter bad traffic**
+
+All of this happens **before anything touches your real server**.
+
+**Notes to remember**
+- Reverse proxy = **protective front door** for your backend.
+- Question it answers: **"Where should I forward this request?"**
+- Users see the proxy only; the real server stays hidden.
+
+---
+
+## Chapter 2: The app goes viral (Load Balancer)
+
+### The problem
+A front door doesn't help when **one server cannot carry the load**.
+
+### The restaurant version
+Your restaurant is packed. One chef can't cook for everyone. So you hire **two more identical chefs**. Now a new question appears: **when an order arrives, which chef should take it?**
+
+### The fix
+You run **three identical copies** of your app. That decision ("which copy takes this request?") gets its **own machine: the load balancer**. Its whole job is to answer that one question, **thousands of times every second**.
+
+> **Analogy:** the **restaurant host** who assigns each new customer to a waiter so that nobody is overloaded.
+
+### Simplest strategy: Round Robin
+- Request 1 → Server 1
+- Request 2 → Server 2
+- Request 3 → Server 3
+- Request 4 → back to Server 1 ...
+
+The load stays **even**, and **no single machine drowns**.
+
+### Why it's essential: health checks
+Server 3 suddenly becomes **unhealthy** (the chef faints).
+- The load balancer **health-checks its servers all the time**.
+- It notices **within seconds** and **stops sending traffic there**.
+- The request meant for Server 3 is **rerouted to a healthy copy**.
+- **Users never notice anything happened.**
+
+### Reverse proxy vs load balancer
+| Reverse proxy | Load balancer |
+|---|---|
+| **Hides one backend** | **Picks between many identical copies** |
+
+**Notes to remember**
+- Load balancer = **spreads traffic + skips unhealthy servers**.
+- Question it answers: **"Which healthy instance should receive this?"**
+- Works with **identical copies** of the same app.
+
+---
+
+## Chapter 3: The app splits into microservices (API Gateway)
+
+### The problem
+The app has grown into **microservices**:
+- **Login** lives in one service
+- **Orders** in another
+- **Payments** in a third
+
+Without help, this becomes a **mess fast**:
+- The client must **know the address of every service**.
+- Every service must build **its own authentication, rate limiting, and logging**: **the same code copied everywhere**.
+- And this is only **six** services. Real systems have far more.
+
+### The mall version
+Your restaurant grew into a **shopping mall** with different shops (food court, bank, pharmacy). Without a main entrance desk:
+- Visitors must know where every shop is.
+- Every shop hires its **own security guard** to check IDs and count visitors. Wasteful and inconsistent.
+
+### The fix
+Put **one smart door** in front of all of them: the **API gateway**.
+
+> **Analogy:** the **mall's main information + security desk**. It checks your ID **once**, counts how many times you've asked, writes it in the log, and then points you to the right shop.
+
+### What makes it different
+The gateway **reads each request and routes it by its path**:
+- `/login` → **auth service**
+- `/orders` → **order service**
+- `/payment` → **payment service**
+
+And all the shared work is done **once, at the door**:
+- **Authentication**
+- **Rate limiting**
+- **Logging**
+
+The duplication is **gone**.
+
+### Load balancer vs API gateway
+| Behind a **load balancer** | Behind a **gateway** |
+|---|---|
+| Servers are usually **identical copies** | Every service is **different** |
+
+**Notes to remember**
+- API gateway = **one door for microservices** + shared policies.
+- Question it answers: **"Which service should get this, and which API policies apply?"**
+- A load balancer **cannot** solve this problem.
+
+---
+
+## The Trick: Ask What Question It Answers
+
+Don't ask *"what does each box do?"*
+**Ask: "What question does it answer about an incoming request?"**
+
+| Box | Question it answers | Chooses between | Restaurant/mall analogy |
+|---|---|---|---|
+| **Reverse Proxy** | *Where should I forward this request?* | **Which server** (controlled entry to the backend) | Receptionist at the front door |
+| **Load Balancer** | *Which healthy instance should receive it?* | **Which instance** (identical copies) | Host assigning customers to identical waiters |
+| **API Gateway** | *Which service should receive it, and which API policies apply?* | **Which service** (different services) | Mall info/security desk pointing to different shops |
+
+> **Which server. Which instance. Which service.**
+> Three different questions, answered at the **very same spot**. That's the whole trick.
+
+---
+
+## Why They Look Identical on Diagrams
+
+Because they genuinely **overlap**:
+- Many **load balancers also act as reverse proxies**: same forwarding idea **+ load spreading**.
+- **API gateways** usually sit in the same reverse-proxy spot, **+ routing and authentication**.
+
+> The **reverse proxy is the base idea**. The other two are that same idea **plus extra responsibilities**.
+
+So they're **not three separate things you pick one of. They are jobs.** One tool can do **more than one job at the same time**.
+
+---
+
+## Think in Roles, Not Products
+
+### Analogy: the smartphone
+A smartphone is a **camera, a map, and a music player in one device**. Our tools work the same way.
+
+### Real example: NGINX
+- Most people know it as a **reverse proxy**.
+- The same NGINX can also be your **load balancer**.
+- And it can **partly** be your **API gateway**.
+- One tool, three jobs; it depends on **how you configure it**.
+
+### Others
+| Tool | Jobs it commonly does |
+|---|---|
+| **NGINX** | Reverse proxy, load balancer, partly API gateway |
+| **HAProxy** | Reverse proxy + load balancing |
+| **Traefik** | Proxy + gateway |
+| **Kong** | Proxy + gateway |
+
+> **The tool is just the thing you install. The job is what it actually does for you.**
+> Always ask **what job a box is doing, not what it's called.**
+
+---
+
+## Where Each One Lives in a Real System
+
+> ⚠️ There is **no single correct diagram**. What follows is **one common setup, not a law.**
+
+**A typical request journey:**
+1. Request comes from the **internet**, often through a **CDN**.
+2. Hits a **load balancer** first → spreads traffic so **no entry point gets crushed**.
+3. Reaches the **API gateway** → the one checkpoint that:
+   - **checks who you are** (authentication)
+   - **limits how often you can ask** (rate limiting)
+   - **sends you to the right service** (routing)
+4. Deeper inside, you may find **more proxies and balancers**:
+   - One service might sit behind **its own reverse proxy**.
+   - Another might have **its own load balancer** in front of a few copies.
+   - Some services have **none at all**.
+
+**Takeaway:** there's **no fixed order to memorize**. Each box shows up **wherever its job is needed**.
+
+---
+
+## Interview Time: Questions That Actually Get Asked
+
+### Q1. Why not just put authentication inside every microservice?
+- That's **exactly the duplication we removed**.
+- **Six services = six chances to get auth wrong.**
+- The gateway does it **once, at the door**: **centralized, consistent, one place to fix**.
+- ⚠️ **Don't forget:** the gateway does **not** remove security from the services. **Each service still checks its own permissions.**
+
+### Q2. Can a load balancer just replace an API gateway?
+- **Not always.**
+- A load balancer picks between **identical copies**.
+- A gateway routes between **different services** and handles **auth and rate limiting**.
+- **Different questions.** A load balancer simply **cannot answer the gateway's question**.
+
+### Q3. Can an API gateway replace a load balancer?
+- **Sometimes, one product can do both jobs.**
+- But the **responsibilities stay different**:
+  - Gateway → *which service gets it, which policies apply*
+  - Load balancer → *spread traffic across instances*
+- **Different responsibility. Different question. Possibly the same product.**
+
+> **Sounding senior vs being senior:** don't recite definitions. **Reason from what each box decides.**
+
+---
+
+## The Whole System, One Last Time
+
+| Stage | What went wrong | Box added | Question it answers |
+|---|---|---|---|
+| 1 | Real server exposed to the world / attackers | **Reverse Proxy** | Where should I forward this request? |
+| 2 | One server can't handle the traffic | **Load Balancer** | Which healthy instance should receive it? |
+| 3 | Many different services, duplicated auth/rate-limit/logging | **API Gateway** | Which service should get it, and which policies apply? |
+
+**The entire memory trick:** *Which server? Which instance? Which service?*
+
+---
+
+## 1-Minute Revision Sheet
+
+- **Reverse proxy** = receptionist at the front door. **Hides** the backend. Can **cache, handle TLS, route, filter**. Real protection also needs **network rules** (backend has no public address).
+- **Load balancer** = host assigning customers to identical waiters. **Spreads load** (e.g., **round robin**) and **health-checks** to skip bad servers.
+- **API gateway** = mall info/security desk. **Routes by path** to **different services** and does **auth, rate limiting, logging once**.
+- **Overlap is normal:** load balancers often act as reverse proxies; gateways sit in the reverse-proxy spot **plus** extras.
+- **They are jobs, not products.** One tool (like **NGINX**) can do several jobs. Think of a **smartphone**.
+- **No single correct diagram.** Each box appears **where its job is needed**.
+- **Gateway doesn't replace service-level security.** Services still check their own permissions.
+- **Interview tip:** answer by **the question each box answers**, not by memorized definitions.
+
+---
+
+*Notes based on the video on reverse proxy, load balancer, and API gateway.*
+
 # Authentication, Told as Rahul's Story
 
 *One user, one app that keeps growing, and every authentication concept showing up exactly when Rahul needs it.*
