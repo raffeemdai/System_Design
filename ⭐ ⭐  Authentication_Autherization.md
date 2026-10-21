@@ -1,5 +1,7 @@
 
 https://www.youtube.com/watch?v=79GIGeDA8_k&list=PLSUu-5i14fZ0
+https://www.youtube.com/watch?v=7iHl71nt49o&list=PLdNCznBZ77NriBGbbHTdM34cvx7dLKi-_
+
 
 # 10,000 Users Hit One Server and It Dies: The Story of Three Boxes
 
